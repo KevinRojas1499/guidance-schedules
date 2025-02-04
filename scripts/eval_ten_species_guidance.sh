@@ -22,6 +22,12 @@ sbatch \
   eval_ten_species_guidance.sh
 comment
 
+
+MODEL=udlm 
+GUIDANCE=cfg 
+GAMMA=1. 
+SEED=1 
+
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
 source setup_env.sh || exit

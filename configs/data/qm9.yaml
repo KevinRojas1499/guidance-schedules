@@ -1,7 +1,7 @@
 train: qm9
 valid: qm9
 tokenizer_name_or_path: yairschiff/qm9-tokenizer
-cache_dir: /share/kuleshov/ssahoo/textdiffusion/data
+cache_dir: ./cache/qm9
 wrap: False
 streaming: False
 override_cache: False

@@ -1,0 +1,17 @@
+torch
+torchvision
+datasets
+hydra-core
+lightning
+rdkit
+rich
+tokenizers
+transformers==4.47
+einops
+timm
+# conda install nvidia::cuda-toolkit=12.1
+mamba-ssm
+flash-attn
+causal-conv1d
+scipy
+scikit-learn

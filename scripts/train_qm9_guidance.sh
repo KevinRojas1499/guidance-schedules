@@ -21,6 +21,12 @@ sbatch \
   train_qm9_guidance.sh
 comment
 
+MODEL=udlm 
+GUIDANCE=cfg 
+PROP=ring_count 
+GAMMA=1. 
+SEED=1 
+
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
 source setup_env.sh
@@ -70,7 +76,7 @@ else
 fi
 
 # To enable preemption re-loading, set `hydra.run.dir` or
-srun python -u -m main \
+python -u -m main \
   diffusion="${DIFFUSION}" \
   parameterization="${PARAMETERIZATION}" \
   T=${T} \
@@ -94,7 +100,7 @@ srun python -u -m main \
   callbacks.checkpoint_every_n_steps.every_n_train_steps=5_000 \
   training.compute_loss_on_pad_tokens=True \
   trainer.max_steps=25_000 \
-  trainer.val_check_interval=1.0 \
+  trainer.val_check_interval=20.0 \
   sampling.num_sample_batches=1 \
   sampling.batch_size=1 \
   sampling.use_cache=${sampling_use_cache} \

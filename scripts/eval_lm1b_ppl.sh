@@ -20,6 +20,12 @@ sbatch \
   eval_lm1b_ppl.sh
 comment
 
+
+MODEL=udlm 
+GUIDANCE=cfg 
+GAMMA=1. 
+SEED=1 
+
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
 source setup_env.sh || exit
@@ -71,13 +77,13 @@ python -u -m main \
     hydra/hydra_logging=disabled \
     seed=${SEED} \
     mode="ppl_eval" \
-    eval.checkpoint_path="${CKPT}/checkpoints/last.ckpt" \
-    eval.generate_samples=False \
+    eval.generate_samples=True \
     loader.eval_batch_size=${BATCH_SIZE} \
     data=lm1b \
     data.wrap=False \
-    backbone=dit \
-    model=small \
+    backbone=hf_dit \
+    model="hf" \
+    model.pretrained_model_name_or_path="kuleshov-group/udlm-lm1b" \
     model.length=128 \
     training.guidance=null \
     parameterization=${PARAMETERIZATION} \

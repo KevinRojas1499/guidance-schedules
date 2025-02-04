@@ -23,6 +23,12 @@ sbatch \
   eval_qm9_guidance.sh
 comment
 
+MODEL=udlm 
+GUIDANCE=cfg 
+PROP=ring_count 
+GAMMA=1. 
+SEED=1 
+
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
 source setup_env.sh || exit
@@ -251,6 +257,7 @@ python -u guidance_eval/qm9_eval.py \
     model=small \
     backbone=dit \
     model.length=32 \
+    +model.pretrained_model_name_or_path="${CKPT}/checkpoints/best.ckpt" \
     training.guidance=null \
     parameterization=${parameterization} \
     diffusion=${diffusion} \
