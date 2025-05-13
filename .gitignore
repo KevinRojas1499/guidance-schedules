@@ -6,3 +6,7 @@ __pycache__/
 outputs/
 watch_folder/
 cache/
+*.json
+*.png
+*.npy
+.txt

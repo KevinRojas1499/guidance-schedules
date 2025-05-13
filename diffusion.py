@@ -2,6 +2,7 @@
   (absorbing state or uniform) and AR
   (a special case of absorbing state).
 """
+import os
 import itertools
 import math
 import typing
@@ -23,6 +24,7 @@ import classifier
 import dataloader
 import models
 import noise_schedule
+from guidance_schedules import get_guidance_strength
 
 LOG2 = math.log(2)
 
@@ -1164,9 +1166,10 @@ class Diffusion(L.LightningModule):
           cache=cache)
       else:
         if self.config.guidance.method == 'cfg':
+          guidance_strength = get_guidance_strength(t, self.config)
           xs, q_xs, cache = self._cfg_denoise(
             cond=cond,
-            gamma=self.config.guidance.gamma,
+            gamma=guidance_strength,
             xt=xt,
             time_conditioning=sigma_t,
             move_chance_t=move_chance_t,

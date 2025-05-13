@@ -134,7 +134,7 @@ class LayerNorm(nn.Module):
     self.weight = nn.Parameter(torch.ones([dim]))
     self.dim = dim
   def forward(self, x):
-    with torch.cuda.amp.autocast(enabled=False):
+    with torch.amp.autocast('cuda', enabled=False):
       x = F.layer_norm(x.float(), [self.dim])
     return x * self.weight[None,None,:]
 
@@ -287,7 +287,7 @@ class DDiTBlock(nn.Module):
       'b s (three h d) -> b s three h d',
       three=3,
       h=self.n_heads)
-    with torch.cuda.amp.autocast(enabled=False):
+    with torch.amp.autocast('cuda', enabled=False):
       cos, sin = rotary_cos_sin
       qkv = apply_rotary_pos_emb(
         qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
@@ -445,7 +445,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         hidden_states.append(x)
       rotary_cos_sin = self.rotary_emb(x)
 
-      with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+      with torch.amp.autocast('cuda', dtype=torch.bfloat16):
         for i in range(len(self.blocks)):
           x = self.blocks[i](x, rotary_cos_sin, c,
                              seqlens=None)
@@ -454,7 +454,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     else:
       x = x_emb
 
-    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
       x = self.output_layer(x, c)
 
     if return_hidden_states:
@@ -522,14 +522,14 @@ class DITClassifier(nn.Module):
 
       rotary_cos_sin = self.rotary_emb(x)
 
-      with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+      with torch.amp.autocast('cuda', dtype=torch.bfloat16):
         for i in range(len(self.blocks)):
           x = self.blocks[i](x, rotary_cos_sin, c,
                              seqlens=None)
     else:
       x = x_emb
 
-    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
       if self.pooling == 'mean':
         x = x.mean(dim=1)
       elif self.pooling == 'max':
