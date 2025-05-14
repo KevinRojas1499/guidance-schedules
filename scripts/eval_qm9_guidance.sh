@@ -15,7 +15,7 @@
 cd scripts/
 MODEL=<ar|mdlm|udlm>
 PROP=<qed|ring_count>
-GUIDANCE=<cfg|fudge|cbg|pplm|nos>
+GUIDANCE=<cfg|fudge|cbg|pplm|nos|ours>
 ... additional args for each guidance method ...
 sbatch \
   --export=ALL,MODEL=${MODEL},PROP=${PROP},GUIDANCE=${GUIDANCE},... \
@@ -23,12 +23,16 @@ sbatch \
   eval_qm9_guidance.sh
 comment
 
-MODEL=udlm 
-GUIDANCE=cfg 
-PROP=ring_count 
-GAMMA=1. 
+# MODEL=mdlm 
+# GUIDANCE=cfg 
+# GUID_SCHEDULE=cosine
+# PROP=qed 
+# GAMMA=1. 
 SEED=1 
+GAMMA=$(printf "%.2f" ${GAMMA})
+echo "GAMMA: ${GAMMA}"
 
+echo "Running eval_qm9_guidance.sh"
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
 source setup_env.sh || exit
@@ -94,9 +98,10 @@ else
 fi
 
 
-guidance_args="guidance=${GUIDANCE} guidance.condition=${CONDITION}"
+guidance_args="guidance=${GUIDANCE} guidance.condition=${CONDITION} +guidance.schedule=${GUID_SCHEDULE}"
 ###### CFG ######
-if [ "${GUIDANCE}" == "cfg" ]; then
+if [ "${GUIDANCE}" == "cfg"  ] || [ "${GUIDANCE}" == "ours"  ]; then 
+  echo "Recognizing that we are using our method"
   # Expecting:
   #  - GAMMA
   if [ -z "${GAMMA}" ]; then

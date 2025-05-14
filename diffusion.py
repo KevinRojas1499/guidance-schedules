@@ -889,7 +889,7 @@ class Diffusion(L.LightningModule):
     if not self.config.eval.disable_ema:
       self.load_ema_params()
     if getattr(self.config, 'guidance', None) is not None:
-      if self.config.guidance.method == 'cfg':
+      if self.config.guidance.method in ['cfg', 'ours']:
         cond = (torch.ones(self.config.sampling.batch_size, device=self.device) *
                 self.config.guidance.condition).to(torch.long)
       else:
@@ -1175,6 +1175,22 @@ class Diffusion(L.LightningModule):
             move_chance_t=move_chance_t,
             move_chance_s=move_chance_s,
             cache=cache)
+        elif self.config.guidance.method == 'ours':
+          guidance_strength = get_guidance_strength(t, self.config)
+          xs = self._tau_denoise(
+            cond=cond,
+            gamma=guidance_strength,
+            xt=xt,
+            t=t,
+            dt=dt)
+        elif self.config.guidance.method == 'unlocking':
+          guidance_strength = get_guidance_strength(t, self.config)
+          xs, q_xs, cache = self._tau_denoise(
+            cond=cond,
+            gamma=guidance_strength,
+            xt=xt,
+            t=t,
+            dt=-dt)
         elif self.config.guidance.method == 'cbg':
           xs, q_xs, cache = self._cbg_denoise(
             classifier_model=classifier_model,
@@ -1200,10 +1216,10 @@ class Diffusion(L.LightningModule):
         else:
           raise NotImplementedError(
             f"Guidance method {self.config.guidance.method} not implemented.")
-      pbar.set_postfix(
-        NFEs=NFEs,
-        prob_check=(q_xs.sum() / xt.numel()).item(),
-        nan_check=bool(q_xs.isnan().sum() > 0))
+      # pbar.set_postfix(
+      #   NFEs=NFEs,
+      #   # prob_check=(q_xs.sum() / xt.numel()).item(),
+      #   nan_check=bool(q_xs.isnan().sum() > 0))
       if (not self.config.sampling.use_cache or
           not torch.allclose(xs, xt)):
         # Disable caching
@@ -1255,6 +1271,83 @@ class Diffusion(L.LightningModule):
 
     return xs, q_xs, {'log_x_theta': log_x_theta}
 
+  def _get_rate_matrix(self, x:torch.tensor, t, labels:torch.LongTensor, w:float=3):
+        """
+        x: [B, 16*16], t: [B], labels: [B]
+        output: [B, 16*16, 1025]
+        """
+        sigma_int, dsigma = self.noise(t)
+        mask_cond = (torch.ones_like(labels) *
+                     self.config.data.num_classes)
+        if w != 0:
+            eps_stable = 1e-10
+            score_c = self.forward(x, sigma_int,cond=labels).exp()
+            score_u =  self.forward(x, sigma_int, cond=mask_cond).exp()
+
+            r_c = self.get_backwards_rate(x, score_c,  keep_zero_diag=True)
+            r_u = self.get_backwards_rate(x, score_u, keep_zero_diag=True)
+
+            r_c_sum = r_c.sum(-1, keepdim=True)
+            r_u_sum = r_c.sum(-1, keepdim=True)
+
+
+            log_r_c = torch.log(r_c + eps_stable)
+            log_r_u = torch.log(r_u + eps_stable)
+            
+            log_r_tilt = w * log_r_c + (1-w) * log_r_u
+            r_tilt = torch.exp(log_r_tilt)
+            tilted_sum = r_tilt.sum(-1, keepdim=True)
+            
+            log_normalization = w * torch.log(r_c_sum + eps_stable) + (1-w) * torch.log(r_u_sum + eps_stable) - torch.log(tilted_sum + eps_stable)
+            r_normalized = torch.exp(log_normalization) * r_tilt
+            # r_normalized.scatter_(-1, x[..., None], -r_normalized.sum(dim=-1, keepdim=True))
+            r_normalized.scatter_(-1, x[..., None], 0)
+
+        else:
+            score_c = self.forward(x, sigma_int,cond=labels).exp()
+            r_c = self.get_backwards_rate(x, score_c,  keep_zero_diag=True)
+
+        rate = dsigma / torch.expm1(sigma_int)
+        
+        return r_normalized * rate.view(-1,1,1)
+
+  def get_backwards_rate(self, x, score, keep_zero_diag=False):
+      D = self.vocab_size
+      if self.diffusion == 'uniform':
+        edge = torch.ones(*x.shape, D, device=x.device) / D
+        edge = edge.scatter(-1, x[..., None], - (D - 1) / D)
+      else:
+        edge = -F.one_hot(x, num_classes=D)
+        edge[x == D - 1] += 1      
+
+      normalized_rate = edge * score
+
+      normalized_rate.scatter_(-1, x[..., None], torch.zeros_like(normalized_rate))
+      if not keep_zero_diag:
+        normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
+      
+      return normalized_rate
+    
+  def _tau_denoise(
+      self,
+      cond: torch.tensor,
+      gamma: float,
+      xt: torch.tensor,
+      t : torch.tensor, 
+      dt : torch.tensor, 
+  ) -> typing.Tuple[torch.tensor, torch.tensor, typing.Dict[str, torch.tensor]]:
+    
+    arange_vals = torch.arange(self.vocab_size, device=self.device).reshape(1, 1, self.vocab_size)
+    qmat = self._get_rate_matrix(xt, t, labels=cond, w=gamma)
+    diffs = arange_vals - xt.unsqueeze(-1)
+    # [B, D, N], state change, diffs[b,d,n] = n - x[b,d]
+    jump_nums = torch.distributions.poisson.Poisson(dt * qmat).sample()
+    jump_nums[jump_nums.sum(dim = -1) > 1] = 0 # TODO reject multiple jumps to the same token
+    overall_jump = torch.sum(jump_nums * diffs, dim=-1)
+    xt = torch.clamp(xt + overall_jump, min=0, max=self.vocab_size-1).to(dtype=torch.int64)
+    return xt
+    
+    
   def _cfg_denoise(
       self,
       cond: torch.tensor,
