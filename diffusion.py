@@ -1209,7 +1209,7 @@ class Diffusion(L.LightningModule):
             dt=dt, normalize=True)
         elif self.config.guidance.method == 'unlocking':
           guidance_strength = get_guidance_strength(t, self.config)
-          xs, q_xs, cache = self._euler_denoise(
+          xs = self._euler_denoise(
             cond=cond,
             gamma=guidance_strength,
             xt=xt,
