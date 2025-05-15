@@ -1309,17 +1309,20 @@ class Diffusion(L.LightningModule):
       alpha_t = alpha_t.view(-1,1,1)
 
       
-      log_score_c = self.forward(x, sigma_int,cond=labels)
+      log_score_c__ = self.forward(x, sigma_int,cond=labels)
       if w != 1:
         mask_cond = (torch.ones_like(labels) * self.config.data.num_classes)
-        log_score_u = self.forward(x, sigma_int,cond=mask_cond)
+        log_score_u__ = self.forward(x, sigma_int,cond=mask_cond)
         
+
+
+        log_score_c = self._compute_score(log_score_c__.exp(), x, alpha_t=alpha_t).log()
+        log_score_u = self._compute_score(log_score_u__.exp(), x, alpha_t=alpha_t).log()
         log_score_w = w * log_score_c + (1-w) * log_score_u
 
-
-        score_c = self._compute_score(log_score_c.exp(), x, alpha_t=alpha_t)
-        score_u = self._compute_score(log_score_u.exp(), x, alpha_t=alpha_t)
-        score_w = self._compute_score(log_score_w.exp(), x, alpha_t=alpha_t)
+        score_c = log_score_c.exp()
+        score_u = log_score_u.exp()
+        score_w = log_score_w.exp()
 
         score_c.scatter_(-1, x[..., None], torch.zeros_like(score_c))
         score_u.scatter_(-1, x[..., None], torch.zeros_like(score_u))
@@ -1334,7 +1337,7 @@ class Diffusion(L.LightningModule):
         normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
         normalized_rate = (sum_c * sum_u / sum_w) * normalized_rate
       else:
-        score_c = self._compute_score(log_score_c.exp(), x, alpha_t=alpha_t)
+        score_c = self._compute_score(log_score_c__.exp(), x, alpha_t=alpha_t)
         normalized_rate = edge * score_c
         normalized_rate.scatter_(-1, x[..., None], torch.zeros_like(normalized_rate))
         normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
