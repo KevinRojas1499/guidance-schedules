@@ -383,6 +383,30 @@ class Diffusion(L.LightningModule):
       )
     raise NotImplementedError(
       f"Diffusion type {self.diffusion} not implemented.")
+  
+  
+  def _compute_score(self, x_theta, xt, alpha_t):
+    """Computes the posterior / approximate posterior.
+
+    Args:
+      x: Either clean input `x0` (one-hot),
+        or model's predicted `x_theta` of shape (B, L, V).
+      xt: The noisy latent (as indices) of shape (B, L).
+      alpha_t: Noise level at t of shape (B, [L | 1], 1).
+
+    Returns:
+      Posterior / approximate posterior of shape (B, L, V).
+    """
+    if self.diffusion == 'uniform':
+      xt_one_hot = F.one_hot(xt, self.vocab_size)
+      x_theta_i = torch.sum(x_theta * xt_one_hot, dim=-1, keepdim=True)  # [B, L, 1]
+      
+      # Calculate score according to equation (49)
+      numerator = alpha_t * self.vocab_size * x_theta + (1 - alpha_t)
+      denominator = alpha_t * self.vocab_size * x_theta_i + (1 - alpha_t)
+      return numerator / denominator
+    raise NotImplementedError(
+      f"Diffusion type {self.diffusion} not implemented.")
 
   def _d3pm_loss(self, model_output, xt, x0, t):
     assert self.config.noise.type == 'loglinear', (
@@ -1177,7 +1201,7 @@ class Diffusion(L.LightningModule):
             cache=cache)
         elif self.config.guidance.method == 'ours':
           guidance_strength = get_guidance_strength(t, self.config)
-          xs = self._tau_denoise(
+          xs = self._euler_denoise(
             cond=cond,
             gamma=guidance_strength,
             xt=xt,
@@ -1185,7 +1209,7 @@ class Diffusion(L.LightningModule):
             dt=dt)
         elif self.config.guidance.method == 'unlocking':
           guidance_strength = get_guidance_strength(t, self.config)
-          xs, q_xs, cache = self._tau_denoise(
+          xs, q_xs, cache = self._euler_denoise(
             cond=cond,
             gamma=guidance_strength,
             xt=xt,
@@ -1271,47 +1295,7 @@ class Diffusion(L.LightningModule):
 
     return xs, q_xs, {'log_x_theta': log_x_theta}
 
-  def _get_rate_matrix(self, x:torch.tensor, t, labels:torch.LongTensor, w:float=3):
-        """
-        x: [B, 16*16], t: [B], labels: [B]
-        output: [B, 16*16, 1025]
-        """
-        sigma_int, dsigma = self.noise(t)
-        mask_cond = (torch.ones_like(labels) *
-                     self.config.data.num_classes)
-        if w != 0:
-            eps_stable = 1e-10
-            score_c = self.forward(x, sigma_int,cond=labels).exp()
-            score_u =  self.forward(x, sigma_int, cond=mask_cond).exp()
-
-            r_c = self.get_backwards_rate(x, score_c,  keep_zero_diag=True)
-            r_u = self.get_backwards_rate(x, score_u, keep_zero_diag=True)
-
-            r_c_sum = r_c.sum(-1, keepdim=True)
-            r_u_sum = r_c.sum(-1, keepdim=True)
-
-
-            log_r_c = torch.log(r_c + eps_stable)
-            log_r_u = torch.log(r_u + eps_stable)
-            
-            log_r_tilt = w * log_r_c + (1-w) * log_r_u
-            r_tilt = torch.exp(log_r_tilt)
-            tilted_sum = r_tilt.sum(-1, keepdim=True)
-            
-            log_normalization = w * torch.log(r_c_sum + eps_stable) + (1-w) * torch.log(r_u_sum + eps_stable) - torch.log(tilted_sum + eps_stable)
-            r_normalized = torch.exp(log_normalization) * r_tilt
-            # r_normalized.scatter_(-1, x[..., None], -r_normalized.sum(dim=-1, keepdim=True))
-            r_normalized.scatter_(-1, x[..., None], 0)
-
-        else:
-            score_c = self.forward(x, sigma_int,cond=labels).exp()
-            r_c = self.get_backwards_rate(x, score_c,  keep_zero_diag=True)
-
-        rate = dsigma / torch.expm1(sigma_int)
-        
-        return r_normalized * rate.view(-1,1,1)
-
-  def get_backwards_rate(self, x, score, keep_zero_diag=False):
+  def get_backwards_rate(self, x, t, labels, w):
       D = self.vocab_size
       if self.diffusion == 'uniform':
         edge = torch.ones(*x.shape, D, device=x.device) / D
@@ -1319,16 +1303,45 @@ class Diffusion(L.LightningModule):
       else:
         edge = -F.one_hot(x, num_classes=D)
         edge[x == D - 1] += 1      
+      
+      sigma_int, dsigma = self.noise(t)
+      alpha_t = torch.exp(-sigma_int)
+      alpha_t = alpha_t.view(-1,1,1)
 
-      normalized_rate = edge * score
+      
+      log_score_c = self.forward(x, sigma_int,cond=labels)
+      if w != 1:
+        mask_cond = (torch.ones_like(labels) * self.config.data.num_classes)
+        log_score_u = self.forward(x, sigma_int,cond=mask_cond)
+        
+        log_score_w = w * log_score_c + (1-w) * log_score_u
 
-      normalized_rate.scatter_(-1, x[..., None], torch.zeros_like(normalized_rate))
-      if not keep_zero_diag:
+
+        score_c = self._compute_score(log_score_c.exp(), x, alpha_t=alpha_t)
+        score_u = self._compute_score(log_score_u.exp(), x, alpha_t=alpha_t)
+        score_w = self._compute_score(log_score_w.exp(), x, alpha_t=alpha_t)
+
+        score_c.scatter_(-1, x[..., None], torch.zeros_like(score_c))
+        score_u.scatter_(-1, x[..., None], torch.zeros_like(score_u))
+        score_w.scatter_(-1, x[..., None], torch.zeros_like(score_w))
+
+        sum_c = score_c.sum(-1,keepdim=True) ** w
+        sum_u = score_u.sum(-1,keepdim=True)
+        sum_u = torch.where(sum_u > 0, sum_u**(1-w), 0)
+        sum_w = score_w.sum(-1,keepdim=True)
+        
+        normalized_rate = edge * score_w
+        normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
+        normalized_rate = (sum_c * sum_u / sum_w) * normalized_rate
+      else:
+        score_c = self._compute_score(log_score_c.exp(), x, alpha_t=alpha_t)
+        normalized_rate = edge * score_c
+        normalized_rate.scatter_(-1, x[..., None], torch.zeros_like(normalized_rate))
         normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
       
-      return normalized_rate
+      return normalized_rate * dsigma.view(-1,1,1)
     
-  def _tau_denoise(
+  def _euler_denoise(
       self,
       cond: torch.tensor,
       gamma: float,
@@ -1337,16 +1350,14 @@ class Diffusion(L.LightningModule):
       dt : torch.tensor, 
   ) -> typing.Tuple[torch.tensor, torch.tensor, typing.Dict[str, torch.tensor]]:
     
-    arange_vals = torch.arange(self.vocab_size, device=self.device).reshape(1, 1, self.vocab_size)
-    qmat = self._get_rate_matrix(xt, t, labels=cond, w=gamma)
-    diffs = arange_vals - xt.unsqueeze(-1)
-    # [B, D, N], state change, diffs[b,d,n] = n - x[b,d]
-    jump_nums = torch.distributions.poisson.Poisson(dt * qmat).sample()
-    jump_nums[jump_nums.sum(dim = -1) > 1] = 0 # TODO reject multiple jumps to the same token
-    overall_jump = torch.sum(jump_nums * diffs, dim=-1)
-    xt = torch.clamp(xt + overall_jump, min=0, max=self.vocab_size-1).to(dtype=torch.int64)
-    return xt
+    # Tau
+    rate = self.get_backwards_rate(xt, t, labels=cond, w=gamma) * dt
+    prob = F.one_hot(xt, num_classes=self.vocab_size).to(rate) + rate
+    prob = torch.clamp(prob, min=0.0)
     
+    # Normalize to ensure rows sum to 1
+    prob = prob / prob.sum(dim=-1, keepdim=True)
+    return _sample_categorical(prob)
     
   def _cfg_denoise(
       self,
@@ -1661,4 +1672,4 @@ class Diffusion(L.LightningModule):
     if self.diffusion == 'absorbing_state':
       xs = torch.where(copy_flag, xt, xs)
 
-    return xs, guided_probs, None
+    return xs, guided_probs, None# 

@@ -20,7 +20,7 @@ def qm9(out_dir, prop, model):
     schedules = ['constant']
     methods = ['cfg', 'ours']
     methods = ['ours']
-    strengths = np.linspace(1.0, 5.0, 5)
+    strengths = np.linspace(0.0, 5.0, 6)
     pbar = tqdm(schedules)
     stats = {}
     for schedule in pbar:
@@ -34,7 +34,7 @@ def qm9(out_dir, prop, model):
                         GUIDANCE={method} \
                         GUID_SCHEDULE={schedule} \
                         GAMMA={strength} \
-                        bash eval_qm9_guidance.sh &> logs_{strength}.txt'
+                        bash eval_qm9_guidance.sh &> logs_{method}_{strength}.txt'
                 subprocess.run(cmd, shell=True, capture_output=True, text=True)
                 output_file = f'outputs/qm9/udlm_{prop}/qm9-eval-{method}_{prop}_T-32_gamma-{strength:.2f}_seed-1.csv'
                 with open(output_file, 'r') as file:

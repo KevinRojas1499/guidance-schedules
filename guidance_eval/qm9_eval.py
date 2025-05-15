@@ -91,10 +91,25 @@ def main(config: omegaconf.DictConfig) -> None:
     'yairschiff/qm9', trust_remote_code=True,
     split='train')
   tokenizer = dataloader.get_tokenizer(config)
-  pretrained = diffusion.Diffusion.load_from_checkpoint(
-    config.eval.checkpoint_path,
-    tokenizer=tokenizer,
-    config=config, logger=False)
+  
+  # Add a custom checkpoint loading function that handles non-Lightning checkpoints
+  try:
+    pretrained = diffusion.Diffusion.load_from_checkpoint(
+      config.eval.checkpoint_path,
+      tokenizer=tokenizer,
+      config=config, logger=False)
+  except KeyError as e:
+    if 'pytorch-lightning_version' in str(e):
+      print("Warning: Checkpoint doesn't have PyTorch Lightning metadata. Attempting to load as a standard PyTorch checkpoint.")
+      # Load the checkpoint manually
+      checkpoint = torch.load(config.eval.checkpoint_path, map_location='cuda')
+      pretrained = diffusion.Diffusion(tokenizer=tokenizer, config=config)
+      # Load state dict, but skip any keys that don't match the model
+      pretrained.load_state_dict(checkpoint, strict=False)
+      pretrained.cuda()
+    else:
+      raise e
+      
   pretrained.eval()
   label_col = config.data.label_col
   pctile_threshold = config.data.label_col_pctile
@@ -147,11 +162,14 @@ def main(config: omegaconf.DictConfig) -> None:
     try:
       mol = rdChem.MolFromSmiles(t)
       if mol is None or len(t) == 0:
+        print('invalids')
         invalids.append(t)
       else:
+        print('valids')
         valids.append(t)
         mol_property.append(mol_property_fn(mol))
     except rdkit.Chem.rdchem.KekulizeException as e:
+      print('exception invalid')
       print(e)
       invalids.append(t)
   valid = len(valids)
