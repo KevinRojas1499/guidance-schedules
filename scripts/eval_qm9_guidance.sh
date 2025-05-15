@@ -15,7 +15,7 @@
 cd scripts/
 MODEL=<ar|mdlm|udlm>
 PROP=<qed|ring_count>
-GUIDANCE=<cfg|fudge|cbg|pplm|nos|ours>
+GUIDANCE=<cfg|fudge|cbg|pplm|nos|ours|unlocking>
 ... additional args for each guidance method ...
 sbatch \
   --export=ALL,MODEL=${MODEL},PROP=${PROP},GUIDANCE=${GUIDANCE},... \
@@ -100,7 +100,7 @@ fi
 
 guidance_args="guidance=${GUIDANCE} guidance.condition=${CONDITION} +guidance.schedule=${GUID_SCHEDULE}"
 ###### CFG ######
-if [ "${GUIDANCE}" == "cfg"  ] || [ "${GUIDANCE}" == "ours"  ]; then 
+if [ "${GUIDANCE}" == "cfg"  ] || [ "${GUIDANCE}" == "ours"  ] || [ "${GUIDANCE}" == "unlocking"  ]; then 
   echo "Recognizing that we are using our method"
   # Expecting:
   #  - GAMMA

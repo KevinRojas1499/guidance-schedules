@@ -381,7 +381,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     if (config.training.guidance is not None or  # Training for / using CFG
         (hasattr(config, 'guidance')
          and config.guidance is not None
-         and config.guidance.method in ['cfg', 'ours'])):
+         and config.guidance.method in ['cfg', 'ours', 'unlocking'])):
       self.cond_map = LabelEmbedder(
         config.data.num_classes + 1,  # +1 for mask
         config.model.cond_dim)

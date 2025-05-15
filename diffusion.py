@@ -913,7 +913,7 @@ class Diffusion(L.LightningModule):
     if not self.config.eval.disable_ema:
       self.load_ema_params()
     if getattr(self.config, 'guidance', None) is not None:
-      if self.config.guidance.method in ['cfg', 'ours']:
+      if self.config.guidance.method in ['cfg', 'ours', 'unlocking']:
         cond = (torch.ones(self.config.sampling.batch_size, device=self.device) *
                 self.config.guidance.condition).to(torch.long)
       else:
@@ -1206,7 +1206,7 @@ class Diffusion(L.LightningModule):
             gamma=guidance_strength,
             xt=xt,
             t=t,
-            dt=dt)
+            dt=dt, normalize=True)
         elif self.config.guidance.method == 'unlocking':
           guidance_strength = get_guidance_strength(t, self.config)
           xs, q_xs, cache = self._euler_denoise(
@@ -1214,7 +1214,7 @@ class Diffusion(L.LightningModule):
             gamma=guidance_strength,
             xt=xt,
             t=t,
-            dt=-dt)
+            dt=-dt, normalize=False)
         elif self.config.guidance.method == 'cbg':
           xs, q_xs, cache = self._cbg_denoise(
             classifier_model=classifier_model,
@@ -1295,7 +1295,7 @@ class Diffusion(L.LightningModule):
 
     return xs, q_xs, {'log_x_theta': log_x_theta}
 
-  def get_backwards_rate(self, x, t, labels, w):
+  def get_backwards_rate(self, x, t, labels, w, normalize=True):
       D = self.vocab_size
       if self.diffusion == 'uniform':
         edge = torch.ones(*x.shape, D, device=x.device) / D
@@ -1335,7 +1335,8 @@ class Diffusion(L.LightningModule):
         
         normalized_rate = edge * score_w
         normalized_rate.scatter_(-1, x[..., None], -normalized_rate.sum(dim=-1, keepdim=True))
-        normalized_rate = (sum_c * sum_u / sum_w) * normalized_rate
+        if normalize:
+          normalized_rate = (sum_c * sum_u / sum_w) * normalized_rate
       else:
         score_c = self._compute_score(log_score_c__.exp(), x, alpha_t=alpha_t)
         normalized_rate = edge * score_c
@@ -1350,11 +1351,12 @@ class Diffusion(L.LightningModule):
       gamma: float,
       xt: torch.tensor,
       t : torch.tensor, 
-      dt : torch.tensor, 
+      dt : torch.tensor,
+      normalize = True 
   ) -> typing.Tuple[torch.tensor, torch.tensor, typing.Dict[str, torch.tensor]]:
     
     # Tau
-    rate = self.get_backwards_rate(xt, t, labels=cond, w=gamma) * dt
+    rate = self.get_backwards_rate(xt, t, labels=cond, w=gamma, normalize=normalize) * dt
     prob = F.one_hot(xt, num_classes=self.vocab_size).to(rate) + rate
     prob = torch.clamp(prob, min=0.0)
     
